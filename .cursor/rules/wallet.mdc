@@ -1,0 +1,8 @@
+---
+description: Wallet service contract agents must not "fix" away
+alwaysApply: true
+---
+
+Read AGENTS.md before changing this repo.
+
+`WalletServicer.encrypt` encrypts `str(card)` (protobuf text format), not `SerializeToString()`. Decrypt returns that same text. Do not hand-edit `wallet_pb2.py` or `wallet_pb2_grpc.py`.
