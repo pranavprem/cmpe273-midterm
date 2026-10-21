@@ -1,0 +1,7 @@
+# Python 3.11+. Versions are pinned to the checked-in generated stubs.
+# wallet_pb2_grpc.py requires grpcio>=1.84.0.
+# wallet_pb2.py requires protobuf>=7.35.1.
+# Regenerate both files after bumping grpcio-tools. See AGENTS.md.
+grpcio==1.84.0
+protobuf==7.36.2
+cryptography==50.0.2

@@ -1,80 +1,79 @@
-'''
-################################## server.py #############################
-# Wallet Encryption GRPC Service encrypts credit/debit cards data and
-# decrypts token back to plain text card detail. It uses Fernet symmetric
-# encryption library.
-# Fernet: https://cryptography.io/en/latest/fernet/
-################################## server.py #############################
-'''
-import time
+"""Wallet encryption gRPC service.
+
+Encrypts card data with Fernet and decrypts a token back to the card's
+protobuf text format. Fernet: https://cryptography.io/en/latest/fernet/
+"""
+
+import os
+from concurrent import futures
+
 import grpc
+from cryptography.fernet import Fernet
+
 import wallet_pb2
 import wallet_pb2_grpc
 
-from concurrent import futures
-from cryptography.fernet import Fernet
 
-_ONE_DAY_IN_SECONDS = 60 * 60 * 24
+class WalletServicer(wallet_pb2_grpc.WalletServicer):
+    """Fernet encryption and decryption for the Wallet service.
 
-class WalletServicer(wallet_pb2.WalletServicer):
-    '''
-    WalletServicer is the main class that handles Fernet encryption and decryption.
-    '''
-    
+    The key is generated in memory when the servicer is constructed. Restarting
+    the process throws that key away, so tokens from a previous process cannot
+    be decrypted.
+    """
 
     def __init__(self):
-        '''
-        Generates a Ferent key and saves it into an instance variable so that
-        it can be re-used at encryption and decryption.
-        Initializes Ferent instance and saves it into another instance variable.
-        '''
-        # TODO
-        key = Fernet.generate_key()
-        self.cipher_suite = Fernet(key)
-
+        self.cipher_suite = Fernet(Fernet.generate_key())
 
     def encrypt(self, request, context):
-        '''
-        Encrypts the card detail from the request.card using Fernet.
-        :param self: self reference
-        :param request: request object
-        :param context: the request context
-        :return: return a protocol buffer card encrypted response with token
-        :rtype: wallet_pb2.CardEncryptResponse
-        '''
-        # TODO
+        """Encrypt ``request.card`` and return a token.
 
-        return wallet_pb2.CardEncryptResponse(token=self.cipher_suite.encrypt(bytes(request.card)))
-
+        The plaintext is ``str(card)`` encoded as UTF-8: the protobuf text
+        format the midterm decrypts back to. Python 2's ``bytes(card)``
+        produced that text. On Python 3, ``bytes(card)`` raises ``TypeError``.
+        """
+        plaintext = str(request.card).encode("utf-8")
+        token = self.cipher_suite.encrypt(plaintext).decode("ascii")
+        return wallet_pb2.CardEncryptResponse(token=token)
 
     def decrypt(self, request, context):
-        '''
-        Decrypts the token from the request.token using Fernet.
-        :param self: self reference
-        :param request: request object
-        :param context: the request context
-        :return: return a protocol buffer card decrypted response with card_in_plain_text
-        :rtype: wallet_pb2.CardDecryptResponse
-        '''
-        # TODO
-        return wallet_pb2.CardDecryptResponse(card_in_plain_text= self.cipher_suite.decrypt(bytes(request.token)))
+        """Decrypt ``request.token`` and return the card text.
 
-def run(host, port):
-    '''
-    Run the GRPC server
-    '''
+        A token from another key, or a tampered token, raises
+        ``cryptography.fernet.InvalidToken``. gRPC surfaces that as status
+        UNKNOWN.
+        """
+        plaintext = self.cipher_suite.decrypt(request.token.encode("ascii"))
+        return wallet_pb2.CardDecryptResponse(
+            card_in_plain_text=plaintext.decode("utf-8")
+        )
+
+
+def create_server(host, port):
+    """Bind a wallet server to ``host:port`` without starting it.
+
+    ``port`` 0 asks the OS for an ephemeral port. Returns ``(server, bound_port)``.
+    """
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=1))
     wallet_pb2_grpc.add_WalletServicer_to_server(WalletServicer(), server)
-    server.add_insecure_port('%s:%d' % (host, port))
-    server.start()
+    bound_port = server.add_insecure_port(f"{host}:{port}")
+    if bound_port == 0:
+        raise RuntimeError(f"Failed to bind {host}:{port}")
+    return server, bound_port
 
+
+def run(host, port):
+    """Start the server and block until Ctrl-C."""
+    server, bound_port = create_server(host, port)
+    server.start()
+    print(f"Server started at...{bound_port}", flush=True)
     try:
-        while True:
-            print "Server started at...%d" % port
-            time.sleep(_ONE_DAY_IN_SECONDS)
+        server.wait_for_termination()
     except KeyboardInterrupt:
         server.stop(0)
 
 
-if __name__ == '__main__':
-    run('0.0.0.0', 3000)
+if __name__ == "__main__":
+    host = os.environ.get("WALLET_HOST", "0.0.0.0")
+    port = int(os.environ.get("WALLET_PORT", "3000"))
+    run(host, port)
